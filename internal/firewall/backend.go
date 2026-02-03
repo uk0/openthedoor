@@ -10,11 +10,21 @@ type Rule struct {
 	Action     string // ACCEPT, DROP, REJECT
 }
 
+// HexRule represents a hex filter rule (experimental)
+type HexRule struct {
+	ID       int
+	Pattern  string // hex pattern like "|de ad be ef|"
+	Port     int    // 0 means all ports
+	Protocol string // tcp, udp, or empty for all
+	Comment  string
+}
+
 // Status represents firewall status
 type Status struct {
-	Active      bool
-	BackendName string
-	RuleCount   int
+	Active       bool
+	BackendName  string
+	RuleCount    int
+	HexRuleCount int
 }
 
 // Backend defines the interface for firewall backends
@@ -41,6 +51,18 @@ type Backend interface {
 	GetStatus() (Status, error)
 }
 
+// HexFilterBackend defines interface for hex filtering (iptables only)
+type HexFilterBackend interface {
+	// AddHexFilter adds a hex pattern filter rule (experimental)
+	AddHexFilter(pattern string, port int, protocol string, comment string) error
+
+	// RemoveHexFilter removes a hex filter rule by ID or pattern
+	RemoveHexFilter(idOrPattern string) error
+
+	// ListHexFilters returns all hex filter rules
+	ListHexFilters() ([]HexRule, error)
+}
+
 // ErrProtectedPort is returned when trying to block a protected port without force
 type ErrProtectedPort struct {
 	Port int
@@ -57,4 +79,13 @@ type ErrBackendNotAvailable struct {
 
 func (e ErrBackendNotAvailable) Error() string {
 	return fmt.Sprintf("firewall backend '%s' is not available on this system", e.Name)
+}
+
+// ErrHexFilterNotSupported is returned when hex filter is not supported
+type ErrHexFilterNotSupported struct {
+	Backend string
+}
+
+func (e ErrHexFilterNotSupported) Error() string {
+	return fmt.Sprintf("hex filter is only supported by iptables backend, current: %s", e.Backend)
 }

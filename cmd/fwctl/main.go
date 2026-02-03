@@ -68,6 +68,7 @@ func main() {
 	rootCmd.AddCommand(unblockCmd())
 	rootCmd.AddCommand(listCmd())
 	rootCmd.AddCommand(statusCmd())
+	rootCmd.AddCommand(hexCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -255,10 +256,39 @@ func blockCmd() *cobra.Command {
 				os.Exit(1)
 			}
 
-			if config.IsProtectedPort(port) && !forceFlag {
-				fmt.Fprintf(os.Stderr, "%s Port %d is protected (%s)\n", red("✗"), port, config.GetProtectedPortName(port))
-				fmt.Fprintf(os.Stderr, "  Use --force to override\n")
-				os.Exit(1)
+			// Check process protection by scanning the port
+			s := scanner.New()
+			ports, _ := s.ScanPorts()
+			var processName string
+			for _, p := range ports {
+				if p.Port == port {
+					processName = p.Process
+					break
+				}
+			}
+
+			// Check protection level based on process name
+			protLevel := config.GetProtectionLevel(processName)
+			procDesc := config.GetProcessDescription(processName)
+			if procDesc == "" {
+				procDesc = processName
+			}
+
+			if protLevel == config.ProtectionStrict {
+				// SSHD - RED warning, requires whitelist
+				if len(allowIPs) == 0 && !forceFlag {
+					fmt.Fprintf(os.Stderr, "%s %s\n", red("✗ CRITICAL:"), red(fmt.Sprintf("Port %d is running %s", port, procDesc)))
+					fmt.Fprintf(os.Stderr, "%s Blocking SSH without whitelist IPs will lock you out!\n", red("  "))
+					fmt.Fprintf(os.Stderr, "  Use: fwctl block %d --allow <your-ip>\n", port)
+					fmt.Fprintf(os.Stderr, "  Or use --force to override (dangerous!)\n")
+					os.Exit(1)
+				}
+				if forceFlag && len(allowIPs) == 0 {
+					fmt.Fprintf(os.Stderr, "%s %s\n", red("⚠ WARNING:"), red("Blocking SSH without whitelist - you may lose access!"))
+				}
+			} else if protLevel == config.ProtectionWarn {
+				// Nginx/Apache - YELLOW warning
+				fmt.Printf("%s Port %d is running %s\n", yellow("⚠ WARNING:"), port, yellow(procDesc))
 			}
 
 			backend := getBackend()
@@ -447,4 +477,202 @@ func isValidIP(ip string) bool {
 		}
 	}
 	return true
+}
+
+// ============================================================================
+// Hex Filter Commands (Experimental)
+// ============================================================================
+
+func hexCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "hex",
+		Short: "[Experimental] Hex pattern filter for iptables",
+		Long: `
+  ╔═══════════════════════════════════════════════════════════╗
+  ║          Hex Filter - Experimental Feature                ║
+  ╚═══════════════════════════════════════════════════════════╝
+
+  Filter and DROP packets containing specific hex patterns.
+  Only supported with iptables backend.
+
+  Hex Pattern Format:
+    |XX XX XX XX|  - hex bytes separated by spaces
+    |deadbeef|     - continuous hex string
+
+  Examples:
+    fwctl hex add "|48 45 4c 4c 4f|"              # Block "HELLO"
+    fwctl hex add "|de ad be ef|" --port 8080    # Block on specific port
+    fwctl hex add "|ff ff|" -p udp --port 53     # Block UDP DNS pattern
+    fwctl hex list                                # List all hex rules
+    fwctl hex remove 1                            # Remove rule by ID
+    fwctl hex remove "|de ad be ef|"              # Remove by pattern
+
+  Use Cases:
+    - Block specific protocol signatures
+    - Filter malicious payloads
+    - Block application-layer patterns`,
+	}
+
+	cmd.AddCommand(hexAddCmd())
+	cmd.AddCommand(hexListCmd())
+	cmd.AddCommand(hexRemoveCmd())
+
+	return cmd
+}
+
+func hexAddCmd() *cobra.Command {
+	var port int
+	var protocol string
+	var comment string
+
+	cmd := &cobra.Command{
+		Use:   "add <hex-pattern>",
+		Short: "Add a hex pattern filter rule",
+		Long: `Add a hex pattern filter to DROP matching packets.
+
+Examples:
+  fwctl hex add "|48 45 4c 4c 4f|"              # Block packets containing "HELLO"
+  fwctl hex add "|de ad be ef|" --port 8080    # Block only on port 8080
+  fwctl hex add "|ff ff|" -p udp               # Block UDP packets with pattern`,
+		Args: cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			pattern := args[0]
+
+			// Validate pattern format
+			if !strings.HasPrefix(pattern, "|") || !strings.HasSuffix(pattern, "|") {
+				fmt.Fprintf(os.Stderr, "%s Invalid hex pattern format\n", red("✗"))
+				fmt.Fprintf(os.Stderr, "  Pattern must be enclosed in |pipes|, e.g., \"|de ad be ef|\"\n")
+				os.Exit(1)
+			}
+
+			backend := getBackend()
+			if backend.Name() != "iptables" {
+				fmt.Fprintf(os.Stderr, "%s Hex filter only supported with iptables backend\n", red("✗"))
+				fmt.Fprintf(os.Stderr, "  Current backend: %s\n", backend.Name())
+				fmt.Fprintf(os.Stderr, "  Use: fwctl --backend iptables hex add ...\n")
+				os.Exit(1)
+			}
+
+			iptables, ok := backend.(*firewall.IPTables)
+			if !ok {
+				fmt.Fprintf(os.Stderr, "%s Failed to get iptables backend\n", red("✗"))
+				os.Exit(1)
+			}
+
+			fmt.Printf("%s [Experimental] Adding hex filter...\n", yellow("⚠"))
+			fmt.Printf("  Pattern: %s\n", cyan(pattern))
+			if port > 0 {
+				fmt.Printf("  Port: %d\n", port)
+			}
+			if protocol != "" {
+				fmt.Printf("  Protocol: %s\n", protocol)
+			}
+
+			if err := iptables.AddHexFilter(pattern, port, protocol, comment); err != nil {
+				fmt.Fprintf(os.Stderr, "%s Failed to add hex filter: %v\n", red("✗"), err)
+				os.Exit(1)
+			}
+
+			fmt.Printf("%s Hex filter added successfully\n", green("✓"))
+		},
+	}
+
+	cmd.Flags().IntVar(&port, "port", 0, "Filter only on specific port")
+	cmd.Flags().StringVarP(&protocol, "proto", "p", "", "Protocol (tcp/udp)")
+	cmd.Flags().StringVarP(&comment, "comment", "c", "", "Rule comment")
+
+	return cmd
+}
+
+func hexListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List all hex filter rules",
+		Run: func(cmd *cobra.Command, args []string) {
+			backend := getBackend()
+			if backend.Name() != "iptables" {
+				fmt.Fprintf(os.Stderr, "%s Hex filter only supported with iptables backend\n", red("✗"))
+				os.Exit(1)
+			}
+
+			iptables, ok := backend.(*firewall.IPTables)
+			if !ok {
+				fmt.Fprintf(os.Stderr, "%s Failed to get iptables backend\n", red("✗"))
+				os.Exit(1)
+			}
+
+			rules, err := iptables.ListHexFilters()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "%s Failed to list hex filters: %v\n", red("✗"), err)
+				os.Exit(1)
+			}
+
+			fmt.Println()
+			fmt.Printf("  %s Hex Filter Rules [Experimental]\n", bold("◆"))
+			fmt.Println("  " + strings.Repeat("─", 60))
+
+			if len(rules) == 0 {
+				fmt.Printf("\n  %s No hex filter rules configured\n\n", yellow("!"))
+				return
+			}
+
+			fmt.Println()
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintf(w, "  %s\t%s\t%s\t%s\t%s\n",
+				bold("ID"), bold("PATTERN"), bold("PORT"), bold("PROTO"), bold("COMMENT"))
+			fmt.Fprintf(w, "  %s\t%s\t%s\t%s\t%s\n",
+				"──", "───────", "────", "─────", "───────")
+
+			for _, r := range rules {
+				portStr := "*"
+				if r.Port > 0 {
+					portStr = strconv.Itoa(r.Port)
+				}
+				protoStr := "*"
+				if r.Protocol != "" && r.Protocol != "all" {
+					protoStr = r.Protocol
+				}
+
+				fmt.Fprintf(w, "  %s\t%s\t%s\t%s\t%s\n",
+					bold(strconv.Itoa(r.ID)),
+					cyan(r.Pattern),
+					portStr,
+					protoStr,
+					r.Comment,
+				)
+			}
+			w.Flush()
+			fmt.Println()
+		},
+	}
+}
+
+func hexRemoveCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "remove <id-or-pattern>",
+		Short: "Remove a hex filter rule by ID or pattern",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			idOrPattern := args[0]
+
+			backend := getBackend()
+			if backend.Name() != "iptables" {
+				fmt.Fprintf(os.Stderr, "%s Hex filter only supported with iptables backend\n", red("✗"))
+				os.Exit(1)
+			}
+
+			iptables, ok := backend.(*firewall.IPTables)
+			if !ok {
+				fmt.Fprintf(os.Stderr, "%s Failed to get iptables backend\n", red("✗"))
+				os.Exit(1)
+			}
+
+			if err := iptables.RemoveHexFilter(idOrPattern); err != nil {
+				fmt.Fprintf(os.Stderr, "%s Failed to remove hex filter: %v\n", red("✗"), err)
+				os.Exit(1)
+			}
+
+			fmt.Printf("%s Hex filter removed successfully\n", green("✓"))
+		},
+	}
 }

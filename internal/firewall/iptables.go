@@ -264,3 +264,165 @@ func (i *IPTables) parseRules(output string) []Rule {
 
 	return rules
 }
+
+// ============================================================================
+// Hex Filter Implementation (Experimental)
+// ============================================================================
+
+// ensureHexChain creates the FWCTL_HEX chain if it doesn't exist
+func (i *IPTables) ensureHexChain() error {
+	// Try to create the chain in raw table
+	runCommand("iptables", "-t", "raw", "-N", config.HexChainName)
+
+	// Ensure the chain is referenced from PREROUTING
+	output, err := runCommand("iptables", "-t", "raw", "-L", "PREROUTING", "-n")
+	if err != nil {
+		return err
+	}
+
+	if !strings.Contains(output, config.HexChainName) {
+		_, err = runCommand("iptables", "-t", "raw", "-I", "PREROUTING", "-j", config.HexChainName)
+		if err != nil {
+			return fmt.Errorf("failed to add hex chain to PREROUTING: %v", err)
+		}
+	}
+
+	return nil
+}
+
+// AddHexFilter adds a hex pattern filter rule
+func (i *IPTables) AddHexFilter(pattern string, port int, protocol string, comment string) error {
+	if err := i.ensureHexChain(); err != nil {
+		return err
+	}
+
+	// Build iptables command
+	args := []string{"-A", config.HexChainName}
+
+	// Add protocol and port if specified
+	if protocol != "" {
+		args = append(args, "-p", protocol)
+	}
+	if port > 0 {
+		if protocol == "" {
+			args = append(args, "-p", "tcp") // default to tcp if port specified
+		}
+		args = append(args, "--dport", strconv.Itoa(port))
+	}
+
+	// Add string match with hex pattern
+	args = append(args, "-m", "string", "--algo", "bm", "--hex-string", pattern, "-j", "DROP")
+
+	// Try with comment first, fallback without
+	fullArgs := append([]string{"-t", "raw"}, args...)
+	if comment != "" {
+		fullArgsWithComment := append(fullArgs, "-m", "comment", "--comment", comment)
+		_, err := runCommand("iptables", fullArgsWithComment...)
+		if err == nil {
+			return nil
+		}
+	}
+
+	_, err := runCommand("iptables", fullArgs...)
+	return err
+}
+
+// RemoveHexFilter removes a hex filter rule by line number or pattern
+func (i *IPTables) RemoveHexFilter(idOrPattern string) error {
+	// Try to parse as line number first
+	if lineNum, err := strconv.Atoi(idOrPattern); err == nil {
+		_, err := runCommand("iptables", "-t", "raw", "-D", config.HexChainName, strconv.Itoa(lineNum))
+		return err
+	}
+
+	// Otherwise, find and remove by pattern
+	output, err := runCommand("iptables", "-t", "raw", "-L", config.HexChainName, "-n", "--line-numbers")
+	if err != nil {
+		return err
+	}
+
+	lines := strings.Split(output, "\n")
+	for i := len(lines) - 1; i >= 0; i-- { // reverse order to preserve line numbers
+		line := lines[i]
+		if strings.Contains(line, idOrPattern) {
+			fields := strings.Fields(line)
+			if len(fields) > 0 {
+				if num, err := strconv.Atoi(fields[0]); err == nil {
+					runCommand("iptables", "-t", "raw", "-D", config.HexChainName, strconv.Itoa(num))
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// ListHexFilters returns all hex filter rules
+func (i *IPTables) ListHexFilters() ([]HexRule, error) {
+	output, err := runCommand("iptables", "-t", "raw", "-L", config.HexChainName, "-n", "-v", "--line-numbers")
+	if err != nil {
+		return []HexRule{}, nil
+	}
+
+	return i.parseHexRules(output), nil
+}
+
+// parseHexRules parses iptables output into HexRule structs
+func (i *IPTables) parseHexRules(output string) []HexRule {
+	var rules []HexRule
+	lines := strings.Split(output, "\n")
+
+	// Match hex-string pattern
+	hexRe := regexp.MustCompile(`STRING match\s+"([^"]+)"`)
+	portRe := regexp.MustCompile(`dpt:(\d+)`)
+	commentRe := regexp.MustCompile(`/\*\s*([^*]+)\s*\*/`)
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "Chain") || strings.HasPrefix(line, "pkts") {
+			continue
+		}
+
+		// Must be a DROP rule with hex string
+		if !strings.Contains(line, "DROP") || !strings.Contains(line, "STRING match") {
+			continue
+		}
+
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+
+		// Parse line number
+		lineNum, err := strconv.Atoi(fields[0])
+		if err != nil {
+			continue
+		}
+
+		rule := HexRule{
+			ID:       lineNum,
+			Protocol: fields[4], // protocol field
+		}
+
+		// Extract hex pattern
+		if match := hexRe.FindStringSubmatch(line); len(match) >= 2 {
+			rule.Pattern = match[1]
+		}
+
+		// Extract port if present
+		if match := portRe.FindStringSubmatch(line); len(match) >= 2 {
+			rule.Port, _ = strconv.Atoi(match[1])
+		}
+
+		// Extract comment if present
+		if match := commentRe.FindStringSubmatch(line); len(match) >= 2 {
+			rule.Comment = strings.TrimSpace(match[1])
+		}
+
+		if rule.Pattern != "" {
+			rules = append(rules, rule)
+		}
+	}
+
+	return rules
+}
