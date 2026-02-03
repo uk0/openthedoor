@@ -86,7 +86,7 @@ jobs:
 
             ### Quick Install
             ```bash
-            curl -fsSL https://raw.githubusercontent.com/firshme/openthedoor/main/install.sh | sudo bash
+            curl -fsSL https://raw.githubusercontent.com/uk0/openthedoor/main/install.sh | sudo bash
             ```
 
             ### Manual Download

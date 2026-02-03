@@ -9,7 +9,7 @@
 
 set -e
 
-REPO="firshme/openthedoor"
+REPO="uk0/openthedoor"
 INSTALL_DIR="/usr/local/bin"
 BINARY_NAME="fwctl"
 
