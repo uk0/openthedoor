@@ -41,8 +41,9 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
         run: |
-          go build -ldflags="-s -w" -o fwctl-${{ matrix.suffix }} ./cmd/fwctl
+          go build -ldflags="-s -w -extldflags '-static'" -o fwctl-${{ matrix.suffix }} ./cmd/fwctl
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
