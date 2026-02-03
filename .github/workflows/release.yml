@@ -28,7 +28,14 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.25'
+
+      - name: Debug - List files
+        run: |
+          pwd
+          ls -la
+          ls -la cmd/ || echo "cmd not found"
+          ls -la cmd/fwctl/ || echo "cmd/fwctl not found"
 
       - name: Build binary
         env:
@@ -79,7 +86,7 @@ jobs:
 
             ### Quick Install
             ```bash
-            curl -fsSL https://raw.githubusercontent.com/firshme/fwctl/main/install.sh | sudo bash
+            curl -fsSL https://raw.githubusercontent.com/firshme/openthedoor/main/install.sh | sudo bash
             ```
 
             ### Manual Download

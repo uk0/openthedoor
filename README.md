@@ -17,21 +17,21 @@ A unified command-line tool for managing Linux firewalls, supporting **iptables*
 ### Quick Install (Recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/firshme/fwctl/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/firshme/openthedoor/main/install.sh | sudo bash
 ```
 
 This will automatically detect your architecture (x86_64/arm64) and install the appropriate binary.
 
 ### Manual Download
 
-Download from [GitHub Releases](https://github.com/firshme/fwctl/releases/tag/latest):
+Download from [GitHub Releases](https://github.com/firshme/openthedoor/releases/tag/latest):
 
 - **x86_64/amd64**: `fwctl-linux-amd64`
 - **ARM64/aarch64**: `fwctl-linux-arm64`
 
 ```bash
 # Example for x86_64
-wget https://github.com/firshme/fwctl/releases/download/latest/fwctl-linux-amd64
+wget https://github.com/firshme/openthedoor/releases/download/latest/fwctl-linux-amd64
 chmod +x fwctl-linux-amd64
 sudo mv fwctl-linux-amd64 /usr/local/bin/fwctl
 ```
@@ -40,8 +40,8 @@ sudo mv fwctl-linux-amd64 /usr/local/bin/fwctl
 
 ```bash
 # Clone the repository
-git clone https://github.com/firshme/fwctl.git
-cd fwctl
+git clone https://github.com/firshme/openthedoor.git
+cd openthedoor
 
 # Build
 go build -o fwctl ./cmd/fwctl
