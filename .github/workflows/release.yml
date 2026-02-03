@@ -1,0 +1,92 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            suffix: linux-amd64
+          - goos: linux
+            goarch: arm64
+            suffix: linux-arm64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build -ldflags="-s -w" -o fwctl-${{ matrix.suffix }} ./cmd/fwctl
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fwctl-${{ matrix.suffix }}
+          path: fwctl-${{ matrix.suffix }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          cp artifacts/fwctl-linux-amd64/fwctl-linux-amd64 release/
+          cp artifacts/fwctl-linux-arm64/fwctl-linux-arm64 release/
+          chmod +x release/*
+
+      - name: Delete existing latest release
+        uses: dev-drprasad/delete-tag-and-release@v1.1
+        with:
+          tag_name: latest
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          delete_release: true
+        continue-on-error: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest Release
+          body: |
+            ## fwctl - Universal Firewall Control Tool
+
+            Auto-built from latest commit.
+
+            ### Quick Install
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/firshme/fwctl/main/install.sh | sudo bash
+            ```
+
+            ### Manual Download
+            - **x86_64/amd64**: `fwctl-linux-amd64`
+            - **ARM64/aarch64**: `fwctl-linux-arm64`
+          files: |
+            release/fwctl-linux-amd64
+            release/fwctl-linux-arm64
+          prerelease: false
+          make_latest: true

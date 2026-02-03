@@ -1,0 +1,55 @@
+# Binaries
+fwctl
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+# claude
+CLAUDE.md
+test_plan.md
+test_report.md
+copy_server.sh
+# Build output
+/bin/
+/dist/
+/build/
+
+# Test binary
+*.test
+
+# Go workspace
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment and secrets
+.env
+.env.*
+*.pem
+*.key
+credentials.json
+secrets.yaml
+secrets.yml
+
+# Config files with sensitive data
+config.local.yaml
+config.local.json
+
+# Temporary files
+tmp/
+temp/
+*.tmp
