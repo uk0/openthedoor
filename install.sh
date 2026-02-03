@@ -110,8 +110,9 @@ verify_install() {
     info "Verifying installation..."
     echo ""
 
-    if command -v fwctl &> /dev/null; then
-        fwctl --help
+    # Check if binary exists and is executable
+    if [ -x "${INSTALL_DIR}/${BINARY_NAME}" ]; then
+        ${INSTALL_DIR}/${BINARY_NAME} --help
         echo ""
         success "fwctl is ready to use!"
         echo ""
