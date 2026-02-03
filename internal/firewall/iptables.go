@@ -38,32 +38,46 @@ func (i *IPTables) BlockPort(port int, protocol string, allowedIPs []string) err
 	i.RemoveRule(port, protocol)
 
 	// Allow localhost (traffic from lo interface)
-	if _, err := runCommand("iptables", "-t", "raw", "-A", config.ChainName,
+	if err := i.addRule("-A", config.ChainName,
 		"-p", protocol, "--dport", strconv.Itoa(port),
-		"-i", "lo", "-j", "ACCEPT",
-		"-m", "comment", "--comment", config.RuleComment); err != nil {
+		"-i", "lo", "-j", "ACCEPT"); err != nil {
 		return fmt.Errorf("failed to add localhost rule: %v", err)
 	}
 
 	// Allow specified IPs
 	for _, ip := range allowedIPs {
-		if _, err := runCommand("iptables", "-t", "raw", "-A", config.ChainName,
+		if err := i.addRule("-A", config.ChainName,
 			"-p", protocol, "--dport", strconv.Itoa(port),
-			"-s", ip, "-j", "ACCEPT",
-			"-m", "comment", "--comment", config.RuleComment); err != nil {
+			"-s", ip, "-j", "ACCEPT"); err != nil {
 			return fmt.Errorf("failed to add allow rule for %s: %v", ip, err)
 		}
 	}
 
 	// Drop all other traffic to this port
-	if _, err := runCommand("iptables", "-t", "raw", "-A", config.ChainName,
+	if err := i.addRule("-A", config.ChainName,
 		"-p", protocol, "--dport", strconv.Itoa(port),
-		"-j", "DROP",
-		"-m", "comment", "--comment", config.RuleComment); err != nil {
+		"-j", "DROP"); err != nil {
 		return fmt.Errorf("failed to add drop rule: %v", err)
 	}
 
 	return nil
+}
+
+// addRule adds an iptables rule, trying with comment first, then without for older versions
+func (i *IPTables) addRule(args ...string) error {
+	// Try with comment first (newer iptables)
+	fullArgs := append([]string{"-t", "raw"}, args...)
+	fullArgs = append(fullArgs, "-m", "comment", "--comment", config.RuleComment)
+
+	_, err := runCommand("iptables", fullArgs...)
+	if err == nil {
+		return nil
+	}
+
+	// Fallback: try without comment module (older iptables like v1.4.21)
+	fullArgs = append([]string{"-t", "raw"}, args...)
+	_, err = runCommand("iptables", fullArgs...)
+	return err
 }
 
 // AllowIP adds an IP to the allowed list for a port
@@ -83,13 +97,12 @@ func (i *IPTables) AllowIP(port int, protocol string, ip string) error {
 		return fmt.Errorf("port %d is not blocked, use 'block' command first", port)
 	}
 
-	// Insert before DROP rule
-	_, err = runCommand("iptables", "-t", "raw", "-I", config.ChainName, strconv.Itoa(dropLineNum),
+	// Insert before DROP rule (try with comment first, then without)
+	args := []string{"-I", config.ChainName, strconv.Itoa(dropLineNum),
 		"-p", protocol, "--dport", strconv.Itoa(port),
-		"-s", ip, "-j", "ACCEPT",
-		"-m", "comment", "--comment", config.RuleComment)
+		"-s", ip, "-j", "ACCEPT"}
 
-	return err
+	return i.addRule(args...)
 }
 
 // RemoveRule removes all rules for a port
